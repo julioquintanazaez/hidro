@@ -200,22 +200,22 @@ async def login_for_access_token(form_data: Annotated[OAuth2PasswordRequestForm,
 	
 @app.get("/")
 def index():
-	return {"Application": "Hello from developers"}
+	return {"Application": "Hidro application"}
 	
+@app.get("/users/me", response_model=schemas.User)
+async def read_users_me(current_user: Annotated[schemas.User, Depends(get_current_user)]):
+	return current_user
+
 @app.get("/get_restricted_user")
 async def get_restricted_user(current_user: Annotated[schemas.User, Depends(get_current_active_user)]):
     return current_user
 	
-@app.get("/get_authenticated_admin_resources", response_model=schemas.User)
-async def get_authenticated_admin_resources(current_user: Annotated[schemas.User, Security(get_current_active_user, scopes=["profesor"])]):
-    return current_user
-	
 @app.get("/get_authenticated_edition_resources", response_model=schemas.User)
-async def get_authenticated_edition_resources(current_user: Annotated[schemas.User, Security(get_current_user, scopes=["cliente"])]):
+async def get_authenticated_edition_resources(current_user: Annotated[schemas.User, Security(get_current_active_user, scopes=["investigador"])]):
     return current_user
 	
-@app.get("/get_user_status", response_model=schemas.User)
-async def get_user_status(current_user: Annotated[schemas.User, Depends(get_current_user)]):
+@app.get("/get_authenticated_read_resources", response_model=schemas.User)
+async def get_authenticated_read_resources(current_user: Annotated[schemas.User, Security(get_current_user, scopes=["cliente"])]):
     return current_user
 	
 #########################
@@ -226,7 +226,7 @@ async def create_owner(db: Session = Depends(get_db)): #Por el momento no tiene 
 	if db.query(models.User).filter(models.User.username == config.ADMIN_USER).first():
 		db_user = db.query(models.User).filter(models.User.username == config.ADMIN_USER).first()
 		if db_user is None:
-			raise HTTPException(status_code=404, detail="User not found")	
+			raise HTTPException(status_code=404, detail="El usuario no existe en la base de datos")	
 		db.delete(db_user)	
 		db.commit()
 		
@@ -244,15 +244,15 @@ async def create_owner(db: Session = Depends(get_db)): #Por el momento no tiene 
 	db.add(db_user)
 	db.commit()
 	db.refresh(db_user)	
-	return {f"User:": "Succesfully created"}
+	return {f"Resultado:": "Usuario creado satisfactoriamente"}
 	
-@app.post("/create_user/", status_code=status.HTTP_201_CREATED)  
-async def create_user(current_user: Annotated[schemas.User, Depends(get_current_active_user)],
+@app.post("/crear_usuario/", status_code=status.HTTP_201_CREATED)  
+async def crear_usuario(current_user: Annotated[schemas.User, Depends(get_current_active_user)],
 				user: schemas.UserAdd, db: Session = Depends(get_db)): 
 	if db.query(models.User).filter(models.User.username == user.username).first() :
 		raise HTTPException( 
 			status_code=400,
-			detail="The user with this email already exists in the system",
+			detail="El usuario existe en la base de datos",
 		)	
 	db_user = models.User(
 		username=user.username, 
@@ -268,21 +268,21 @@ async def create_user(current_user: Annotated[schemas.User, Depends(get_current_
 	db.add(db_user)
 	db.commit()
 	db.refresh(db_user)	
-	return {f"User: {db_user.username}": "Succesfully created"}
+	return {f"Usuario: {db_user.username}": "creado satisfactoriamente"}
 	
-@app.get("/read_users/", status_code=status.HTTP_201_CREATED) 
-async def read_users(current_user: Annotated[schemas.User, Depends(get_current_active_user)],
+@app.get("/leer_usuarios/", status_code=status.HTTP_201_CREATED) 
+async def leer_usuarios(current_user: Annotated[schemas.User, Depends(get_current_active_user)],
 		skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):    	
 	db_users = db.query(models.User).offset(skip).limit(limit).all()    
 	return db_users
 	
 
-@app.put("/update_user/{username}", status_code=status.HTTP_201_CREATED) 
-async def update_user(current_user: Annotated[schemas.User, Depends(get_current_active_user)], 
+@app.put("/actualizar_usuario/{username}", status_code=status.HTTP_201_CREATED) 
+async def actualizar_usuario(current_user: Annotated[schemas.User, Depends(get_current_active_user)], 
 				username: str, new_user: schemas.UserUPD, db: Session = Depends(get_db)):
 	db_user = db.query(models.User).filter(models.User.username == username).first()
 	if db_user is None:
-		raise HTTPException(status_code=404, detail="User not found")
+		raise HTTPException(status_code=404, detail="Usuario no encontrado")
 	db_user.nombre=new_user.nombre	
 	db_user.primer_appellido=new_user.primer_appellido
 	db_user.segundo_appellido=new_user.segundo_appellido
@@ -293,54 +293,54 @@ async def update_user(current_user: Annotated[schemas.User, Depends(get_current_
 	db.refresh(db_user)	
 	return db_user	
 	
-@app.put("/activate_user/{username}", status_code=status.HTTP_201_CREATED) 
-async def activate_user(current_user: Annotated[schemas.User, Depends(get_current_active_user)],
+@app.put("/activar_usuario/{username}", status_code=status.HTTP_201_CREATED) 
+async def activar_usuario(current_user: Annotated[schemas.User, Depends(get_current_active_user)],
 				username: str, new_user: schemas.UserActivate, db: Session = Depends(get_db)):
 	db_user = db.query(models.User).filter(models.User.username == username).first()
 	if db_user is None:
-		raise HTTPException(status_code=404, detail="User not found")
+		raise HTTPException(status_code=404, detail="Usuario no encontrado")
 	if username != "_admin" and username != current_user.username:
 		db_user.disable=new_user.disable		
 		db.commit()
 		db.refresh(db_user)	
 	return db_user	
 	
-@app.delete("/delete_user/{username}", status_code=status.HTTP_201_CREATED) 
-async def delete_user(current_user: Annotated[schemas.User, Depends(get_current_active_user)],
+@app.delete("/eliminar_usuario/{username}", status_code=status.HTTP_201_CREATED) 
+async def eliminar_usuario(current_user: Annotated[schemas.User, Depends(get_current_active_user)],
 				username: str, db: Session = Depends(get_db)):
 	db_user = db.query(models.User).filter(models.User.username == username).first()
 	if db_user is None:
-		raise HTTPException(status_code=404, detail="User not found")	
+		raise HTTPException(status_code=404, detail="Usuario no encontrado")	
 	if username != "_admin" and username != current_user.username:
 		db.delete(db_user)	
 		db.commit()
-	return {"Deleted": "Delete User Successfuly"}
+	return {"Deleted": "Usuario eliminado satisfactoriamente"}
 	
-@app.put("/reset_password/{username}", status_code=status.HTTP_201_CREATED) 
-async def reset_password(current_user: Annotated[schemas.User, Security(get_current_user, scopes=[ "profesor", "cliente", "estudiante"])],
+@app.put("/actualizar_contrasenna/{username}", status_code=status.HTTP_201_CREATED) 
+async def actualizar_contrasenna(current_user: Annotated[schemas.User, Security(get_current_user, scopes=["investigador", "cliente"])],
 				username: str, password: schemas.UserPassword, db: Session = Depends(get_db)):
 	db_user = db.query(models.User).filter(models.User.username == username).first()
 	if db_user is None:
-		raise HTTPException(status_code=404, detail="User not found")	
+		raise HTTPException(status_code=404, detail="Usuario no encontrado")	
 	db_user.hashed_password=pwd_context.hash(password.hashed_password)
 	db.commit()
 	db.refresh(db_user)	
-	return {"Result": "Password Updated Successfuly"}
+	return {"Result": "Contrasenna actualizada satisfactoriamente"}
 	
-@app.put("/reset_password_by_user/{username}", status_code=status.HTTP_201_CREATED) 
-async def reset_password_by_user(current_user: Annotated[schemas.User, Security(get_current_user, scopes=[ "profesor", "cliente", "estudiante"])],
+@app.put("/actualizar_contrasenna_por_usuario/{username}", status_code=status.HTTP_201_CREATED) 
+async def actualizar_contrasenna_por_usuario(current_user: Annotated[schemas.User, Security(get_current_user, scopes=["investigador", "cliente"])],
 				username: str, password: schemas.UserResetPassword, db: Session = Depends(get_db)):
 				
 	if not verify_password(password.actualpassword, current_user.hashed_password): 
-		return HTTPException(status_code=700, detail="Actual password doesn't match")
+		return HTTPException(status_code=700, detail="La cotrasenna actual no coincide")
 		
 	db_user = db.query(models.User).filter(models.User.username == username).first()	
 	if db_user is None:
-		raise HTTPException(status_code=404, detail="User not found")	
+		raise HTTPException(status_code=404, detail="Usuario no encontrado")	
 	db_user.hashed_password=pwd_context.hash(password.newpassword)
 	db.commit()
 	db.refresh(db_user)	
-	return {"response": "Password Updated Successfuly"}
+	return {"Response": "Contrasenna actualizada satisfactoriamente"}
 		
 #############################
 ####  ENTIDAD ORIGEN  #######
