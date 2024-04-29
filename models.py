@@ -70,12 +70,12 @@ class Datos(Base):
 	__tablename__ = "datos"	
 	
 	id_dato = Column(GUID, primary_key=True, default=GUID_DEFAULT_SQLITE) 
-	dato_fecha = Column(DateTime, unique=True, nullable=False, index=True)
-	dato_valor = Column(Float, nullable=False, index=True)
-	
+	dato_fecha = Column(DateTime, onupdate=func.now())
+	dato_valor = Column(Float, nullable=False, index=True)	
 	#Relacion M-1 con tabla padre "Estaciones"
 	estacion_id = Column(GUID, ForeignKey("estaciones.id_estacion"))
-	estacion = relationship("Estaciones", back_populates="datos_lista")	
+	estacion = relationship("Estaciones", back_populates="datos_lista")		
+	#Agregar una restriccion de insertcion de datos (Estacion - Fecha)
 	
 	
 	

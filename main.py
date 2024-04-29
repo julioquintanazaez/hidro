@@ -358,9 +358,9 @@ async def crear_provincia(current_user: Annotated[schemas.User, Depends(get_curr
 		return {"Result":"Provincia creada satisfactoriamente"}
 		
 	except IntegrityError as e:
-		raise HTTPException(status_code=500, detail="Error de integridad creando objeto Entidad origen")
+		raise HTTPException(status_code=500, detail="Error de integridad creando objeto Provincia")
 	except SQLAlchemyError as e: 
-		raise HTTPException(status_code=405, detail="Error inesperado creando el objeto Entidad origen")		
+		raise HTTPException(status_code=405, detail="Error inesperado creando el objeto Provincia")		
 
 @app.get("/leer_provincias/", status_code=status.HTTP_201_CREATED)  
 async def leer_provincias(current_user: Annotated[schemas.User, Security(get_current_user, scopes=["investigador", "cliente"])],
@@ -558,7 +558,7 @@ async def crear_dato(current_user: Annotated[schemas.User, Depends(get_current_a
 	
 	try:
 		db_dato = models.Datos(
-			dato_fecha = dato.dato_fecha,
+			dato_fecha = func.now(),
 			dato_valor = dato.dato_valor,
 			estacion_id = dato.estacion_id,
 		)			
@@ -584,7 +584,26 @@ async def leer_datos(current_user: Annotated[schemas.User, Security(get_current_
 						models.Estaciones.nombre_estacion
 					).select_from(models.Datos
 					).join(models.Estaciones, models.Estaciones.id_estacion == models.Datos.estacion_id
+					).order_by(models.Estaciones.nombre_estacion
 					).all()	
+	
+	return db_datos
+	
+@app.get("/leer_datos_por_estacion/{id}", status_code=status.HTTP_201_CREATED)  
+async def leer_datos_por_estacion(current_user: Annotated[schemas.User, Security(get_current_user, scopes=["investigador", "cliente"])],
+					id: str, skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):    
+	
+	db_datos = db.query(
+			models.Datos.id_dato,
+			models.Datos.dato_fecha,
+			models.Datos.dato_valor,
+			models.Datos.estacion_id,
+			models.Estaciones.nombre_estacion
+		).select_from(models.Datos
+		).join(models.Estaciones, models.Estaciones.id_estacion == models.Datos.estacion_id
+		).filter(models.Estaciones.estacion_id == id
+		).order_by(models.Estaciones.nombre_estacion					
+		).all()	
 	
 	return db_datos
 	
@@ -612,6 +631,18 @@ async def actualizar_dato(current_user: Annotated[schemas.User, Security(get_cur
 	if db_dato is None:
 		raise HTTPException(status_code=404, detail="El dato seleccionado no existe en la base de datos")
 	
+	db_dato.dato_valor = dato.dato_valor
+	
+	db.commit()
+	db.refresh(db_dato)	
+	
+	return {"Result": "Dato actualizado satisfactoriamente"}	
+
+@app.put("/crear_dato_faltante/", status_code=status.HTTP_201_CREATED) 
+async def crear_dato_faltante(current_user: Annotated[schemas.User, Security(get_current_user, scopes=["investigador", "cliente"])], 
+				dato: schemas.Datos_Faltante, db: Session = Depends(get_db)):
+	
+	db_dato.dato_fecha = dato.dato_fecha
 	db_dato.dato_valor = dato.dato_valor
 	
 	db.commit()

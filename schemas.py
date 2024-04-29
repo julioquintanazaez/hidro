@@ -115,8 +115,14 @@ class Estaciones_InDB(Estaciones):
 #-------------------------
 #-------- DATOS ----------
 #-------------------------
-class Datos(BaseModel):
+class Datos_Faltante(BaseModel):
 	dato_fecha : date  
+	dato_valor : str	
+		
+class Datos_UPD(BaseModel):
+	dato_valor : str  
+	
+class Datos(BaseModel):
 	dato_valor : str
 	estacion_id : str
 
@@ -125,8 +131,5 @@ class Datos(BaseModel):
 		allow_population_by_field_name = True
 		arbitrary_types_allowed = True	
 		
-class Datos_UPD(BaseModel):
-	dato_valor : str  
-
 class Datos_InDB(Datos):	
 	id_dato : str	
