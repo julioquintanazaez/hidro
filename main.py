@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from sqlalchemy.sql import func
+from sqlalchemy import and_
 from sqlalchemy.sql.expression import case
 from sqlalchemy import desc, asc
 from uuid import uuid4
@@ -28,6 +29,8 @@ import concurrent.futures
 import csv
 from io import BytesIO, StringIO
 from fastapi.responses import StreamingResponse
+from fastapi import File, UploadFile
+import codecs
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -45,8 +48,8 @@ app = FastAPI()
 
 # Allow these origins to access the API
 origins = [	
-	"https://proj-precipitaciones.onrender.com/",
-	"https://proj-precipitaciones.onrender.com/",		
+	"http://proj-precipitaciones.onrender.com",
+	"https://proj-precipitaciones.onrender.com",		
 	"http://localhost",
 	"http://localhost:8080",
 	"https://localhost:8080",
@@ -350,7 +353,8 @@ async def crear_provincia(current_user: Annotated[schemas.User, Depends(get_curr
 					provincia: schemas.Provincias, db: Session = Depends(get_db)):
 	try:
 		db_provincia = models.Provincias(
-			nombre_provincia = provincia.nombre_provincia
+			nombre_provincia = provincia.nombre_provincia,
+			codigo_provincia = provincia.codigo_provincia
 		)			
 		db.add(db_provincia)   	
 		db.commit()
@@ -391,7 +395,8 @@ async def actualizar_provincia(current_user: Annotated[schemas.User, Security(ge
 	if db_provincia is None:
 		raise HTTPException(status_code=404, detail="La provincia no existen en la base de datos")
 	
-	db_provincia.org_nombre=provincia.nombre_provincia	
+	db_provincia.org_nombre = provincia.nombre_provincia	
+	db_provincia.codigo_provincia = provincia.codigo_provincia
 	
 	db.commit()
 	db.refresh(db_provincia)	
@@ -427,12 +432,13 @@ async def crear_municipio(current_user: Annotated[schemas.User, Depends(get_curr
 @app.get("/leer_municipios/", status_code=status.HTTP_201_CREATED)  
 async def leer_municipios(current_user: Annotated[schemas.User, Security(get_current_user, scopes=["investigador", "cliente"])],
 					skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):    
-	
+	 
 	db_municipios = db.query(
 						models.Municipios.id_municipio,
 						models.Municipios.nombre_municipio,
 						models.Municipios.provincia_id,
-						models.Provincias.nombre_provincia
+						models.Provincias.nombre_provincia,
+						models.Provincias.codigo_provincia
 					).select_from(models.Municipios
 					).join(models.Provincias, models.Provincias.id_provincia == models.Municipios.provincia_id
 					).all()	
@@ -481,11 +487,15 @@ async def crear_estacion(current_user: Annotated[schemas.User, Depends(get_curre
 	db_municipio = db.query(models.Municipios).filter(models.Municipios.id_municipio == estacion.municipio_id).first()
 	
 	if db_municipio is None:
-		raise HTTPException(status_code=404, detail="El municipio no existen en la base de datos")
+		raise HTTPException(status_code=404, detail="El municipio existe en la base de datos")
 	
 	try:
 		db_estacion = models.Estaciones(
 			nombre_estacion = estacion.nombre_estacion,
+			codigo_estacion = estacion.codigo_estacion,
+			altura_estacion = estacion.altura_estacion,
+			norte_estacion = estacion.norte_estacion,
+			sur_estacion = estacion.sur_estacion,
 			municipio_id = estacion.municipio_id,
 		)			
 		db.add(db_estacion)   	
@@ -505,6 +515,10 @@ async def leer_estaciones(current_user: Annotated[schemas.User, Security(get_cur
 	db_estaciones = db.query(
 						models.Estaciones.id_estacion,
 						models.Estaciones.nombre_estacion,
+						models.Estaciones.codigo_estacion,
+						models.Estaciones.altura_estacion,
+						models.Estaciones.norte_estacion,
+						models.Estaciones.sur_estacion,
 						models.Estaciones.municipio_id,
 						models.Municipios.nombre_municipio
 					).select_from(models.Estaciones
@@ -581,7 +595,11 @@ async def leer_datos(current_user: Annotated[schemas.User, Security(get_current_
 						models.Datos.dato_fecha,
 						models.Datos.dato_valor,
 						models.Datos.estacion_id,
-						models.Estaciones.nombre_estacion
+						models.Estaciones.nombre_estacion,
+						models.Estaciones.codigo_estacion,
+						models.Estaciones.altura_estacion,
+						models.Estaciones.norte_estacion,
+						models.Estaciones.sur_estacion,
 					).select_from(models.Datos
 					).join(models.Estaciones, models.Estaciones.id_estacion == models.Datos.estacion_id
 					).order_by(models.Estaciones.nombre_estacion
@@ -649,4 +667,346 @@ async def crear_dato_faltante(current_user: Annotated[schemas.User, Security(get
 	db.refresh(db_dato)	
 	
 	return {"Result": "Dato actualizado satisfactoriamente"}		
+	
+#############################
+####### CARGAR DATOS ########
+#############################	
+#from fastapi import BackgroundTasks
+#metodo(bgt: BackgroundTasks, file: UploadFile = File(...))
+#csvReader = csv.DictReader(codecs.iterdecode(file.file, "utf-8"))
+#bgt.add_task(file.file.close())
+#return list(csvReader)
+
+def formateData(input_date):
+	format = "%Y/%m/%d"	
+	input_without_space = input_date.strip()
+	_datetime = datetime.strptime(input_without_space, format)
+	return _datetime.date()
+	
+def del_withe_spaces(input):	
+	templ = input.lstrip()
+	return templ.rstrip()
+	
+def formatNumber(inputN):
+	if inputN < 10:
+		return "0" + str(inputN)
+	return str(inputN)
+	
+def createFecha(anno, mes, dia):
+	return anno+"/"+mes+"/"+dia
+	
+@app.post("/cargar_dato_simple_format/")
+async def cargar_dato_simple_format(current_user: Annotated[schemas.User, Depends(get_current_active_user)],
+					file: UploadFile = File(...), db: Session = Depends(get_db)):
+					
+	csvReader = csv.DictReader(codecs.iterdecode(file.file, "utf-8"))
+	estadistica = {
+		"provincias_count": 0, 
+		"municipios_count": 0, 
+		"estaciones_count": 0, 
+		"datos_count": 0
+	}
+	
+	for rows in csvReader:
+	
+		provincia = del_withe_spaces(rows["Provincia"])
+		municipio = del_withe_spaces(rows["Municipio"])
+		estacion = del_withe_spaces(rows["Estacion"])
+		fecha = del_withe_spaces(rows["Fecha"])
+		valor = del_withe_spaces(rows["Valor"])
+								
+		db_provincia = db.query(models.Provincias).filter(models.Provincias.nombre_provincia == provincia).first()
+		#Buscar si la provincia no existe		
+		if db_provincia is None:
+			print(provincia + ":  No existe")
+			try:
+				db_provincia = models.Provincias(nombre_provincia = provincia)			
+				db.add(db_provincia)   	
+				db.commit()
+				db.refresh(db_provincia)
+				estadistica["provincias_count"] += 1
+				
+				db_municipio = db.query(models.Municipios).filter(models.Municipios.nombre_municipio == municipio).first()
+				#Buscar si el municipio existe		
+				if db_municipio is None:
+					print(db_provincia.nombre_provincia + " : " + municipio + " : No existe")
+					try:
+						db_municipio = models.Municipios(
+							nombre_municipio = municipio,
+							provincia_id = db_provincia.id_provincia,
+						)			
+						db.add(db_municipio)   	
+						db.commit()
+						db.refresh(db_municipio)
+						estadistica["municipios_count"] += 1
+						
+						db_estacion = db.query(models.Estaciones).filter(models.Estaciones.nombre_estacion == estacion).first()
+						#Buscar si la estacion existe	
+						if db_estacion is None:
+							try:
+								db_estacion = models.Estaciones(
+									nombre_estacion = estacion,
+									municipio_id = db_municipio.id_municipio,
+								)			
+								db.add(db_estacion)   	
+								db.commit()
+								db.refresh(db_estacion)	
+								estadistica["estaciones_count"] += 1
+								
+								try:
+									db_dato = models.Datos(
+										dato_fecha = formateData(fecha),
+										dato_valor = valor,
+										estacion_id = db_estacion.id_estacion,
+									)			
+									db.add(db_dato)   	
+									db.commit()
+									db.refresh(db_dato)
+									estadistica["datos_count"] += 1
+									
+								except IntegrityError as e: #Para datos
+									db.rollback()
+									pass
+								
+							except SQLAlchemyError as e: #Para estacion
+								pass
+								
+						else:
+							try:
+								db_dato = models.Datos(
+									dato_fecha = formateData(fecha),
+									dato_valor = valor,
+									estacion_id = db_estacion.id_estacion,
+								)			
+								db.add(db_dato)   	
+								db.commit()
+								db.refresh(db_dato)
+								estadistica["datos_count"] += 1
+								
+							except IntegrityError as e: #Para datos
+								db.rollback()
+								pass
+						
+					except SQLAlchemyError as e: #Para municipio
+						pass
+					
+				else:
+					db_estacion = db.query(models.Estaciones).filter(models.Estaciones.nombre_estacion == estacion).first()
+					#Buscar si la estacion existe	
+					if db_estacion is None:
+						try:
+							db_estacion = models.Estaciones(
+								nombre_estacion = estacion,
+								municipio_id = db_municipio.id_municipio,
+							)			
+							db.add(db_estacion)   	
+							db.commit()
+							db.refresh(db_estacion)	
+							estadistica["estaciones_count"] += 1
+							
+							try:
+								db_dato = models.Datos(
+									dato_fecha = formateData(fecha),
+									dato_valor = valor,
+									estacion_id = db_estacion.id_estacion,
+								)			
+								db.add(db_dato)   	
+								db.commit()
+								db.refresh(db_dato)
+								estadistica["datos_count"] += 1
+								
+							except IntegrityError as e: #Para datos
+								db.rollback()
+								pass
+							
+						except SQLAlchemyError as e: #Para estacion
+							pass
+					
+					else:
+						try:
+							db_dato = models.Datos(
+								dato_fecha = formateData(fecha),
+								dato_valor = valor,
+								estacion_id = db_estacion.id_estacion,
+							)			
+							db.add(db_dato)   	
+							db.commit()
+							db.refresh(db_dato)
+							estadistica["datos_count"] += 1
+							
+						except IntegrityError as e: #Para datos
+							db.rollback()
+							pass
+					
+			except SQLAlchemyError as e: #Para provincia
+				pass
+		
+		else:
+			db_municipio = db.query(models.Municipios).filter(models.Municipios.nombre_municipio == municipio).first()
+			#Buscar si el municipio existe		
+			if db_municipio is None:
+				print(db_provincia.nombre_provincia + ": Existe " + " : " + municipio + " : No existe")
+				try:
+					db_municipio = models.Municipios(
+						nombre_municipio = municipio,
+						provincia_id = db_provincia.id_provincia,
+					)			
+					db.add(db_municipio)   	
+					db.commit()
+					db.refresh(db_municipio)
+					estadistica["municipios_count"] += 1
+					
+					db_estacion = db.query(models.Estaciones).filter(models.Estaciones.nombre_estacion == estacion).first()
+					#Buscar si la estacion existe	
+					if db_estacion is None:
+						try:
+							db_estacion = models.Estaciones(
+								nombre_estacion = estacion,
+								municipio_id = db_municipio.id_municipio,
+							)			
+							db.add(db_estacion)   	
+							db.commit()
+							db.refresh(db_estacion)	
+							estadistica["estaciones_count"] += 1
+							
+							try:
+								db_dato = models.Datos(
+									dato_fecha = formateData(fecha),
+									dato_valor = valor,
+									estacion_id = db_estacion.id_estacion,
+								)			
+								db.add(db_dato)   	
+								db.commit()
+								db.refresh(db_dato)
+								estadistica["datos_count"] += 1
+								
+							except IntegrityError as e: #Para datos
+								db.rollback()
+								pass
+							
+						except SQLAlchemyError as e: #Para estacion
+							pass
+							
+					else:
+						try:
+							db_dato = models.Datos(
+								dato_fecha = formateData(fecha),
+								dato_valor = valor,
+								estacion_id = db_estacion.id_estacion,
+							)			
+							db.add(db_dato)   	
+							db.commit()
+							db.refresh(db_dato)
+							estadistica["datos_count"] += 1
+							
+						except IntegrityError as e: #Para datos
+							db.rollback()
+							pass
+					
+				except SQLAlchemyError as e: #Para municipio
+					pass
+			
+			else:
+				db_estacion = db.query(models.Estaciones).filter(models.Estaciones.nombre_estacion == estacion).first()
+				#Buscar si la estacion existe	
+				if db_estacion is None:
+					try:
+						db_estacion = models.Estaciones(
+							nombre_estacion = estacion,
+							municipio_id = db_municipio.id_municipio,
+						)			
+						db.add(db_estacion)   	
+						db.commit()
+						db.refresh(db_estacion)	
+						estadistica["estaciones_count"] += 1
+						
+						try:
+							db_dato = models.Datos(
+								dato_fecha = formateData(fecha),
+								dato_valor = valor,
+								estacion_id = db_estacion.id_estacion,
+							)			
+							db.add(db_dato)   	
+							db.commit()
+							db.refresh(db_dato)
+							estadistica["datos_count"] += 1
+							
+						except IntegrityError as e: #Para datos
+							db.rollback()
+							pass
+						
+					except SQLAlchemyError as e: #Para estacion
+						pass
+						
+				else:
+					try:
+						db_dato = models.Datos(
+							dato_fecha = formateData(fecha),
+							dato_valor = valor,
+							estacion_id = db_estacion.id_estacion,
+						)			
+						db.add(db_dato)   	
+						db.commit()
+						db.refresh(db_dato)
+						estadistica["datos_count"] += 1
+						
+					except IntegrityError as e: #Para datos
+						db.rollback()
+						pass
+		
+	file.file.close()
+		
+	return estadistica
+	
+@app.post("/cargar_dato_pluviometros/")
+async def cargar_dato_pluviometros(current_user: Annotated[schemas.User, Depends(get_current_active_user)],
+					file: UploadFile = File(...), db: Session = Depends(get_db)):
+					
+	csvReader = csv.DictReader(codecs.iterdecode(file.file, "utf-8"))	
+	estadistica = {
+		"datos_count": 0,
+		"nuevos": 0,
+		"existen": 0
+	}
+	
+	for rows in csvReader:			
+		estacion = del_withe_spaces(rows["Estacion"])  #
+		anno = del_withe_spaces(rows["Ano"])
+		mes = del_withe_spaces(rows["IdMes"])
+		
+		#Precondicion, ya la estacion existe
+		db_estacion = db.query(models.Estaciones).filter(models.Estaciones.nombre_estacion == estacion).first()
+		
+		for i in range(1, 31):
+			try:
+				dia = "Dia" + formatNumber(i)
+				valor = del_withe_spaces(rows[dia])		
+				fecha = formateData(createFecha(anno, mes, formatNumber(i)))
+				fechades = formateData(createFecha(anno, mes, formatNumber(i+1)))				
+				#print(createFecha(anno, mes, formatNumber(i)) + ": " + str(valor))
+				
+				try:
+					db_dato = models.Datos(
+						dato_fecha =fecha,
+						dato_valor = valor,
+						estacion_id = db_estacion.id_estacion,
+					)			
+					db.add(db_dato)   	
+					db.commit()
+					db.refresh(db_dato)
+					estadistica["datos_count"] += 1
+					estadistica["nuevos"] += 1 
+					
+				except IntegrityError as e: #Para datos
+					db.rollback()
+					pass
+						
+				
+			except ValueError as e:
+				pass
+		
+	return  estadistica
+		
+	
+
 

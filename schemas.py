@@ -67,6 +67,7 @@ class TokenData(BaseModel):
 #-------------------------
 class Provincias(BaseModel):	
 	nombre_provincia : str
+	codigo_provincia : str
 			
 	class Config:
 		orm_mode = True
@@ -96,18 +97,28 @@ class Municipios_InDB(Municipios):
 	
 #-------------------------
 #-----  ESTACIONES  ------
-#-------------------------
+#-------------------------		
+class Estaciones_UPD(BaseModel):
+	nombre_estacion : str 
+	
+class Estaciones_Caracteristicas(BaseModel):
+	codigo_estacion : str
+	altura_estacion : float
+	norte_estacion : float
+	sur_estacion : float
+	
 class Estaciones(BaseModel):
 	nombre_estacion : str 
-	municipio_id : str
+	codigo_estacion : str
+	altura_estacion : float
+	norte_estacion : float
+	sur_estacion : float
+	municipio_id : str	
 	
 	class Config:
 		orm_mode = True
 		allow_population_by_field_name = True
 		arbitrary_types_allowed = True	
-		
-class Estaciones_UPD(BaseModel):
-	nombre_estacion : str 
 	
 class Estaciones_InDB(Estaciones):	
 	id_estacion : str	
