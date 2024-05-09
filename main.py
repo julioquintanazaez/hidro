@@ -8,6 +8,7 @@ from sqlalchemy.sql import func
 from sqlalchemy import and_
 from sqlalchemy.sql.expression import case
 from sqlalchemy import desc, asc
+from sqlalchemy import text
 from uuid import uuid4
 from pathlib import Path
 from typing import Union
@@ -22,8 +23,6 @@ import schemas
 from database import SessionLocal, engine 
 import init_db
 import config
-from fpdf import FPDF
-from fpdf_table import PDFTable, Align, add_image_local
 import asyncio
 import concurrent.futures
 import csv
@@ -31,6 +30,15 @@ from io import BytesIO, StringIO
 from fastapi.responses import StreamingResponse
 from fastapi import File, UploadFile
 import codecs
+import json
+#FOR MACHONE LEARNING
+import numpy as np
+import pandas as pd
+from sklearn.ensemble import RandomForestRegressor
+import skforecast
+from skforecast.ForecasterAutoreg import ForecasterAutoreg
+
+
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -619,7 +627,7 @@ async def leer_datos_por_estacion(current_user: Annotated[schemas.User, Security
 			models.Estaciones.nombre_estacion
 		).select_from(models.Datos
 		).join(models.Estaciones, models.Estaciones.id_estacion == models.Datos.estacion_id
-		).filter(models.Estaciones.estacion_id == id
+		).filter(models.Estaciones.id_estacion == id
 		).order_by(models.Estaciones.nombre_estacion					
 		).all()	
 	
@@ -666,7 +674,109 @@ async def crear_dato_faltante(current_user: Annotated[schemas.User, Security(get
 	db.commit()
 	db.refresh(db_dato)	
 	
-	return {"Result": "Dato actualizado satisfactoriamente"}		
+	return {"Result": "Dato actualizado satisfactoriamente"}	
+
+#############################
+####### MODELS STUFF ########
+#############################	
+# , parse_dates={"fecha_dato":"%YYYY-%mm-%dd"}
+@app.get("/obtener_estadisticas_estacion/{id}")
+async def obtener_estadisticas_estacion(current_user: Annotated[schemas.User, Depends(get_current_active_user)],
+					id: str, db: Session = Depends(get_db)):
+	
+	sql = db.query(
+			models.Datos.dato_fecha,
+			models.Datos.dato_valor
+		).select_from(models.Datos
+		).join(models.Estaciones, models.Estaciones.id_estacion == models.Datos.estacion_id
+		).filter(models.Estaciones.id_estacion == id
+		).statement
+					   
+	df = pd.read_sql(sql, con=engine)
+	
+	est = df.describe()
+	
+	estadistica = {
+		"count": est["dato_valor"][0],
+		"mean": est["dato_valor"][1],
+		"std": est["dato_valor"][2],
+		"min": est["dato_valor"][3],
+		"25p": est["dato_valor"][4],
+		"50p": est["dato_valor"][5],
+		"75p": est["dato_valor"][6],
+		"max": est["dato_valor"][7]	
+	}
+		
+	return estadistica
+
+@app.get("/obtener_estadisticas/")
+async def obtener_estadisticas(current_user: Annotated[schemas.User, Depends(get_current_active_user)],
+					 db: Session = Depends(get_db)):
+	
+	sql_estadisticas = db.query(
+			func.count(models.Datos.dato_valor).label("datos_registrados"),
+			func.sum(models.Datos.dato_valor).label("total_precipitaciones"),
+			func.max(models.Datos.dato_valor).label("max_precipitaciones"),
+			func.min(models.Datos.dato_valor).label("min_precipitaciones"),
+			models.Estaciones.nombre_estacion
+		).select_from(models.Datos
+		).join(models.Estaciones, models.Estaciones.id_estacion == models.Datos.estacion_id
+		).group_by(models.Estaciones.nombre_estacion
+		).all()
+					   
+	#df = pd.read_sql(sql, con=engine) 	
+		
+	return sql_estadisticas
+	
+@app.get("/estacion_csv/{id}")
+async def estacion_csv(current_user: Annotated[schemas.User, Depends(get_current_active_user)],
+					id: str, db: Session = Depends(get_db)):
+	
+	sql = db.query(
+			models.Datos.dato_fecha,
+			models.Datos.dato_valor
+		).select_from(models.Datos
+		).join(models.Estaciones, models.Estaciones.id_estacion == models.Datos.estacion_id
+		).filter(models.Estaciones.id_estacion == id
+		).statement
+					   
+	df = pd.read_sql(sql, con=engine)	
+	#df.to_csv("data.csv", index=False, encoding="utf-8")	
+	stream = StringIO()
+	df.to_csv(stream, index=False, encoding="utf-8")	
+	response = StreamingResponse(iter([stream.getvalue()]),	media_type="text/csv")
+	response.headers["Content-Disposition"] = "attachement; filename=export.csv"	
+		
+	return response
+	
+@app.get("/predicciones_estacion/{id}")
+async def predicciones_estacion(current_user: Annotated[schemas.User, Depends(get_current_active_user)],
+					id: str, db: Session = Depends(get_db)):
+	
+	#Cargando datos
+	sql = db.query(
+		models.Datos.dato_fecha,
+		models.Datos.dato_valor
+	).select_from(models.Datos
+	).join(models.Estaciones, models.Estaciones.id_estacion == models.Datos.estacion_id
+	).filter(models.Estaciones.id_estacion == id
+	).statement
+					   
+	datos = pd.read_sql(sql, con=engine)	
+	#Preparando datos
+	datos["dato_fecha"] = pd.to_datetime(datos["dato_fecha"], format="%Y-%m-%d")
+	datos = datos.set_index("dato_fecha")
+	datos = datos.asfreq("MS", fill_value=np.nan)
+	datos["dato_valor"].fillna(datos["dato_valor"].mean(), inplace=True)
+	datos = datos.sort_index()
+	#Preparando el clasificador	
+	regressor = RandomForestRegressor(max_depth=3, n_estimators=500, random_state=123)
+	forecaster = ForecasterAutoreg(regressor = regressor, lags = 20)
+	forecaster.fit(y=datos["dato_valor"])
+	#Realizando las predicciones
+	predicciones = forecaster.predict(steps=36)
+						
+	return predicciones
 	
 #############################
 ####### CARGAR DATOS ########

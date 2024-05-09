@@ -1,4 +1,5 @@
 # Ignore the build directory
 __pycache__/
-
+temp_requirements.txt
+data.csv
 
